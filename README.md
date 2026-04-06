@@ -19,6 +19,8 @@ Create and activate environment:
 ```
 conda create -n openenv python=3.10 -y
 conda activate openenv
+
+(C:\ProgramData\anaconda3\shell\condabin\conda-hook.ps1) ; (conda activate openenv)
 ```
 
 You should see:
