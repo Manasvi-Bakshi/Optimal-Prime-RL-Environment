@@ -1,10 +1,56 @@
-name: openenv-project
-version: 1.0
+spec_version: 1
+name: pkt_schd_rl
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
 
-endpoints:
-  reset: /reset
-  step: /step
-  state: /state
-  grader: /grader
-  tasks: /tasks
-  baseline: /baseline
+
+
+
+name: packet-scheduling-env
+description: >
+  A network packet scheduling environment where an agent allocates bandwidth
+  between priority and regular traffic to minimize congestion.
+
+tasks:
+  - name: easy
+    description: Low traffic, predictable arrivals
+    max_steps: 50
+
+  - name: moderate
+    description: Moderate traffic with bursty arrivals
+    max_steps: 50
+
+  - name: hard
+    description: High congestion with heavy bursts
+    max_steps: 50
+
+observation_space:
+  type: object
+  properties:
+    q_priority:
+      type: float
+    q_regular:
+      type: float
+    incoming:
+      type: float
+    step:
+      type: integer
+
+action_space:
+  type: object
+  properties:
+    priority_ratio:
+      type: float
+      minimum: 0.0
+      maximum: 1.0
+
+reward:
+  description: >
+    Negative reward proportional to queue sizes, with higher penalty for
+    priority queue and additional penalty for overflow.
+
+grader:
+  type: custom
+  description: Normalizes total reward into [0,1] based on task difficulty.

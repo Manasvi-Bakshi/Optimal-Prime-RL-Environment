@@ -1,0 +1,89 @@
+# =========================
+# 1. Secrets & Environment
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# 2. Python Artifacts
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# 3. Virtual Environments
+# =========================
+venv/
+env/
+ENV/
+.venv/
+conda-env/
+*.conda
+
+# =========================
+# 4. Build / Distribution
+# =========================
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# =========================
+# 5. Logs & Runtime Files
+# =========================
+*.log
+*.out
+*.err
+
+# =========================
+# 6. IDE / Editor Noise
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# =========================
+# 7. Jupyter / ML
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# 8. Data / Large Files
+# =========================
+data/
+datasets/
+*.csv
+*.parquet
+*.h5
+*.pt
+*.pth
+
+# =========================
+# 9. Docker / System
+# =========================
+docker-compose.override.yml
+
+# =========================
+# 10. Coverage / Testing
+# =========================
+.coverage
+htmlcov/
+.pytest_cache/
+
+# =========================
+# 11. HuggingFace / Caches
+# =========================
+.cache/
+huggingface/
+hf_cache/
+
+# =========================
+# 12. Misc
+# =========================
+*.tmp
+*.bak
