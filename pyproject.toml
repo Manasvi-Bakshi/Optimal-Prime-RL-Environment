@@ -10,8 +10,13 @@ dependencies = [
     "uvicorn",
     "pydantic",
     "numpy",
-    "requests"
+    "requests",
+    "openenv-core>=0.2.0"
 ]
+
+# 🔥 FIXED ENTRYPOINT
+[project.scripts]
+server = "server.app:main"
 
 [tool.setuptools]
 packages = ["server"]
