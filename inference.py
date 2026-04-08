@@ -1,9 +1,6 @@
 import os
 import requests
 from typing import List, Optional
-from dotenv import load_dotenv
-
-load_dotenv()
 
 BASE_ENV_URL = os.getenv("BASE_ENV_URL", "http://localhost:8000")
 MAX_STEPS = int(os.getenv("MAX_STEPS", 50))
@@ -39,7 +36,6 @@ def detect_regime(obs, history):
     fairness = obs["fairness_index"]
     loss = obs["loss_rate"]
 
-    # avoid slicing + new list creation
     n = len(history)
     total_p = q_p
     total_r = q_r
@@ -49,7 +45,7 @@ def detect_regime(obs, history):
         total_p += h["q_priority"]
         total_r += h["q_regular"]
 
-    denom = (min(5, n + 1))
+    denom = min(5, n + 1)
     avg_q_p = total_p / denom
     avg_q_r = total_r / denom
 
@@ -58,13 +54,10 @@ def detect_regime(obs, history):
 
     if incoming > 14 and loss > 0.05:
         return "throughput_race"
-
     if p_pressure > 0.58 and avg_q_p > avg_q_r * 1.4:
         return "priority_flood"
-
     if p_pressure < 0.42 and avg_q_r > avg_q_p * 1.4:
         return "regular_surge"
-
     if fairness < 0.72 and total_q > 4.0:
         return "fairness_stress"
 
@@ -126,6 +119,15 @@ def heuristic_action(obs, history, prev_ratio):
     return max(0.0, min(1.0, 0.8 * target + 0.2 * prev_ratio))
 
 
+def safe_post(session, url, payload=None):
+    try:
+        res = session.post(url, json=payload, timeout=10)
+        res.raise_for_status()
+        return res.json(), None
+    except Exception as e:
+        return None, str(e)
+
+
 def main():
     rewards = []
     total_reward = 0.0
@@ -138,26 +140,32 @@ def main():
 
     log_start(TASK_NAME, BENCHMARK, "heuristic-baseline")
 
-    session = requests.Session()  # 🔥 reuse connection
+    session = requests.Session()
 
     try:
-        res = session.post(f"{BASE_ENV_URL}/reset", timeout=10)
-        data = res.json()
+        data, err = safe_post(session, f"{BASE_ENV_URL}/reset")
+        if err:
+            log_step(0, "error", 0.0, True, err)
+            log_end(False, 0, 0.0, [])
+            return
+
         obs = data["observation"]["observation"]
 
         for step in range(1, MAX_STEPS + 1):
             action_val = heuristic_action(obs, obs_history, prev_ratio)
             prev_ratio = action_val
 
-            res = session.post(
+            data, err = safe_post(
+                session,
                 f"{BASE_ENV_URL}/step",
-                json={"action": {"priority_ratio": action_val}},
-                timeout=10
+                {"action": {"priority_ratio": action_val}}
             )
 
-            data = res.json()
-            obs = data["observation"]["observation"]
+            if err:
+                log_step(step, "error", 0.0, True, err)
+                break
 
+            obs = data["observation"]["observation"]
             reward = float(data["reward"])
             done = data["done"]
 
@@ -174,8 +182,7 @@ def main():
             if done:
                 break
 
-        # spec-compliant scoring
-        max_total_reward = MAX_STEPS * 5.0  # safe upper bound
+        max_total_reward = MAX_STEPS * 5.0
         score = total_reward / max_total_reward
         score = max(0.0, min(1.0, score))
 
