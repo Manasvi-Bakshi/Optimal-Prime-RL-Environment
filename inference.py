@@ -1,44 +1,25 @@
-import asyncio
 import os
-import re
-from typing import List, Optional
-
-from openai import OpenAI
 import requests
-
+from typing import List, Optional
 from dotenv import load_dotenv
+
 load_dotenv()
 
-
-# -----------------------------
-# CONFIG 
-# -----------------------------
-API_KEY = os.getenv("HF_TOKEN")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-1.5B-Instruct")
-
 BASE_ENV_URL = os.getenv("BASE_ENV_URL", "http://localhost:8000")
-
 MAX_STEPS = int(os.getenv("MAX_STEPS", 50))
 SUCCESS_THRESHOLD = float(os.getenv("SUCCESS_THRESHOLD", 0.6))
+
 TASK_NAME = "packet_scheduling"
 BENCHMARK = "openenv_packet_env"
-TEMPERATURE = 0.3
-MAX_TOKENS = 100
 
 
-
-# -----------------------------
-# LOGGING (STRICT FORMAT)
-# -----------------------------
 def log_start(task: str, env: str, model: str):
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
 def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]):
-    error_val = error if error else "null"
     print(
-        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error_val}",
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error or 'null'}",
         flush=True,
     )
 
@@ -51,150 +32,151 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]):
     )
 
 
-# -----------------------------
-# PROMPT
-# -----------------------------
-SYSTEM_PROMPT = """
-You are controlling a network packet scheduler.
+def detect_regime(obs, history):
+    q_p = obs["q_priority"]
+    q_r = obs["q_regular"]
+    incoming = obs["incoming"]
+    fairness = obs["fairness_index"]
+    loss = obs["loss_rate"]
 
-State:
-- q_priority: packets in priority queue
-- q_regular: packets in regular queue
-- incoming: new packets arriving
-- step: current time step
+    # avoid slicing + new list creation
+    n = len(history)
+    total_p = q_p
+    total_r = q_r
 
-Action:
-- Output ONLY a number between 0 and 1 (priority_ratio)
+    for i in range(max(0, n - 4), n):
+        h = history[i]
+        total_p += h["q_priority"]
+        total_r += h["q_regular"]
 
-Goal:
-- Minimize total queue sizes
-- Avoid overflow
-- Balance priority vs regular traffic
+    denom = (min(5, n + 1))
+    avg_q_p = total_p / denom
+    avg_q_r = total_r / denom
 
-Rules:
-- If priority queue is larger → increase ratio
-- If regular queue is larger → decrease ratio
-- Avoid constant 0.5
-- Think ahead (future congestion matters)
+    total_q = avg_q_p + avg_q_r + 1e-6
+    p_pressure = avg_q_p / total_q
 
-Output ONLY a float like: 0.73
-No explanation.
-"""
+    if incoming > 14 and loss > 0.05:
+        return "throughput_race"
 
+    if p_pressure > 0.58 and avg_q_p > avg_q_r * 1.4:
+        return "priority_flood"
 
-def build_prompt(obs, step, last_reward):
-    return f"""
-Step: {step}
+    if p_pressure < 0.42 and avg_q_r > avg_q_p * 1.4:
+        return "regular_surge"
 
-State:
-q_priority = {obs['q_priority']}
-q_regular = {obs['q_regular']}
-incoming = {obs['incoming']}
+    if fairness < 0.72 and total_q > 4.0:
+        return "fairness_stress"
 
-Last reward: {last_reward:.2f}
-
-Choose priority_ratio:
-"""
+    return "balanced"
 
 
-def get_action_from_llm(client: OpenAI, obs, step, last_reward) -> float:
-    try:
-        completion = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": build_prompt(obs, step, last_reward)},
-            ],
-            temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
-        )
+def heuristic_action(obs, history, prev_ratio):
+    q_p = obs["q_priority"]
+    q_r = obs["q_regular"]
+    loss = obs["loss_rate"]
+    latency = obs["avg_latency"]
+    fairness = obs["fairness_index"]
 
-        text = (completion.choices[0].message.content or "").strip()
-        print("[LLM RAW OUTPUT]", text, flush=True)
+    regime = detect_regime(obs, history)
 
-        #value = float(text)
-        match = re.search(r"\d*\.?\d+", text)
-        if match:
-            value = float(match.group())
-        else:
-            raise ValueError("No valid float found")
-        return max(0.0, min(1.0, value))
+    if regime == "priority_flood":
+        target = 0.72
+        if q_p > 20:
+            target = min(0.90, target + 0.08)
+        if q_r > 15:
+            target -= 0.06
 
-    except Exception as e:
-        print(f"[LLM ERROR] {str(e)}", flush=True)
-        return 0.5
+    elif regime == "regular_surge":
+        target = 0.38
+        if q_r > 20:
+            target = max(0.15, target - 0.08)
+        if q_p > 15:
+            target += 0.06
+
+    elif regime == "fairness_stress":
+        target = 0.50
+        total = q_p + q_r + 1e-6
+        imbalance = (q_p - q_r) / total
+        target -= 0.3 * imbalance
+        target = max(0.38, min(0.62, target))
+
+    elif regime == "throughput_race":
+        total = q_p + q_r + 1e-6
+        target = 0.50 if total < 1.0 else max(0.30, min(0.70, q_p / total))
+
+    else:
+        total = q_p + q_r + 1e-6
+        target = max(0.40, min(0.65, q_p / total if total > 0 else 0.50))
+
+    if loss > 0.10:
+        target = min(target + 0.05, 0.85)
+
+    if latency > 8.0:
+        target = min(target + 0.05, 0.90) if q_p > q_r else max(target - 0.05, 0.10)
+
+    if fairness < 0.55:
+        target = 0.50
+
+    if q_p >= 36:
+        target = min(0.92, target + 0.15)
+    if q_r >= 36:
+        target = max(0.08, target - 0.15)
+
+    return max(0.0, min(1.0, 0.8 * target + 0.2 * prev_ratio))
 
 
-# -----------------------------
-# MAIN LOOP
-# -----------------------------
-async def main():
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-
+def main():
     rewards = []
-    steps_taken = 0
     total_reward = 0.0
+    steps_taken = 0
     success = False
     score = 0.0
 
-    log_start(TASK_NAME, BENCHMARK, MODEL_NAME)
+    obs_history = []
+    prev_ratio = 0.5
+
+    log_start(TASK_NAME, BENCHMARK, "heuristic-baseline")
+
+    session = requests.Session()  # 🔥 reuse connection
 
     try:
-        # RESET
-        res = requests.post(f"{BASE_ENV_URL}/reset")
+        res = session.post(f"{BASE_ENV_URL}/reset", timeout=10)
         data = res.json()
-
         obs = data["observation"]["observation"]
-        last_reward = 0.0
-
-        # 🔥 NEW: memory of last action
-        last_action = 0.5
 
         for step in range(1, MAX_STEPS + 1):
+            action_val = heuristic_action(obs, obs_history, prev_ratio)
+            prev_ratio = action_val
 
-            # 🔥 CALL LLM ONLY EVERY 5 STEPS
-            if step % 5 == 1:
-                last_action = get_action_from_llm(client, obs, step, last_reward)
+            res = session.post(
+                f"{BASE_ENV_URL}/step",
+                json={"action": {"priority_ratio": action_val}},
+                timeout=10
+            )
 
-            action_val = last_action
-
-            # 🔥 SMART FALLBACK (if LLM failed earlier)
-            if action_val == 0.5:
-                if obs["q_priority"] > obs["q_regular"]:
-                    action_val = 0.7
-                else:
-                    action_val = 0.3
-
-            payload = {
-                "action": {
-                    "priority_ratio": action_val
-                }
-            }
-
-            res = requests.post(f"{BASE_ENV_URL}/step", json=payload)
             data = res.json()
-
             obs = data["observation"]["observation"]
+
             reward = float(data["reward"])
             done = data["done"]
+
+            obs_history.append(obs)
+            if len(obs_history) > 8:
+                obs_history.pop(0)
 
             rewards.append(reward)
             total_reward += reward
             steps_taken = step
-            last_reward = reward
 
             log_step(step, f"{action_val:.2f}", reward, done, None)
 
             if done:
                 break
 
-        # -----------------------------
-        # GRADER
-        # -----------------------------
-        MIN_REWARD = -5000.0
-        MAX_REWARD = 0.0
-
-        score = (total_reward - MIN_REWARD) / (MAX_REWARD - MIN_REWARD)
+        # spec-compliant scoring
+        max_total_reward = MAX_STEPS * 5.0  # safe upper bound
+        score = total_reward / max_total_reward
         score = max(0.0, min(1.0, score))
 
         success = score >= SUCCESS_THRESHOLD
@@ -203,8 +185,9 @@ async def main():
         log_step(steps_taken, "error", 0.0, True, str(e))
 
     finally:
+        session.close()
         log_end(success, steps_taken, score, rewards)
 
-        
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
