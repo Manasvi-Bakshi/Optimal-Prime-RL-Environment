@@ -1,5 +1,8 @@
+openenv
 fastapi
 uvicorn
 pydantic
+numpy
 requests
-openenv
+python-dotenv
+openai>=1.0.0
