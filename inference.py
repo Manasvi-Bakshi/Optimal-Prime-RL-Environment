@@ -1,7 +1,7 @@
 import os
 import requests
 from typing import List, Optional
-from openai import OpenAI   # ✅ NEW
+from openai import OpenAI
 
 BASE_ENV_URL = os.getenv("BASE_ENV_URL", "http://localhost:8000")
 MAX_STEPS = int(os.getenv("MAX_STEPS", 50))
@@ -10,10 +10,16 @@ SUCCESS_THRESHOLD = float(os.getenv("SUCCESS_THRESHOLD", 0.6))
 TASK_NAME = "packet_scheduling"
 BENCHMARK = "openenv_packet_env"
 
-# ✅ NEW: LLM CLIENT (MANDATORY FOR PHASE 2)
+# 🔥 FIXED: enforce correct env usage
+api_base = os.environ.get("API_BASE_URL")
+api_key = os.environ.get("API_KEY")
+
+if not api_base or not api_key:
+    raise RuntimeError("Missing API_BASE_URL or API_KEY")
+
 client = OpenAI(
-    base_url=os.getenv("API_BASE_URL"),
-    api_key=os.getenv("API_KEY"),
+    base_url=api_base,
+    api_key=api_key,
 )
 
 
@@ -36,30 +42,24 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]):
     )
 
 
-# ✅ NEW: minimal LLM call
+# 🔥 FIXED: no silent failure + guaranteed proxy attempt
 def llm_hint(obs):
     try:
         response = client.chat.completions.create(
-            model=os.getenv("MODEL_NAME", "gpt-4o-mini"),
+            model=os.environ.get("MODEL_NAME", "gpt-4o-mini"),
             messages=[
-                {
-                    "role": "system",
-                    "content": "Return ONLY a number between 0 and 1."
-                },
-                {
-                    "role": "user",
-                    "content": f"Queues: {obs['q_priority']}, {obs['q_regular']}"
-                }
+                {"role": "system", "content": "Return ONLY a number between 0 and 1."},
+                {"role": "user", "content": f"{obs['q_priority']},{obs['q_regular']}"}
             ],
             max_tokens=5,
         )
 
         text = response.choices[0].message.content.strip()
-        val = float(text)
-        return max(0.0, min(1.0, val))
+        return max(0.0, min(1.0, float(text)))
 
-    except Exception:
-        return None
+    except Exception as e:
+        print(f"[LLM_ERROR] {str(e)}", flush=True)
+        return 0.5
 
 
 def detect_regime(obs, history):
@@ -184,16 +184,13 @@ def main():
 
         obs = data["observation"]["observation"]
 
-        # ✅ ONE LLM CALL PER EPISODE
+        # 🔥 guaranteed LLM call
         llm_ratio = llm_hint(obs)
 
         for step in range(1, MAX_STEPS + 1):
             base_action = heuristic_action(obs, obs_history, prev_ratio)
 
-            if llm_ratio is not None:
-                action_val = 0.8 * base_action + 0.2 * llm_ratio
-            else:
-                action_val = base_action
+            action_val = 0.8 * base_action + 0.2 * llm_ratio
 
             prev_ratio = action_val
 
