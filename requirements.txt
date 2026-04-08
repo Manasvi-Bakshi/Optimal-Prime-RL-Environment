@@ -5,4 +5,4 @@ pydantic
 numpy
 requests
 python-dotenv
-openai>=1.0.0
+openai
