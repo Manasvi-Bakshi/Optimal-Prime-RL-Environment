@@ -15,9 +15,9 @@ dependencies = [
     "openai>=1.0.0"
 ]
 
-# 🔥 FIXED ENTRYPOINT
+# ✅ IMPORTANT: match deployment entry
 [project.scripts]
-server = "server.app:main"
+server = "app:app"
 
 [tool.setuptools]
 packages = ["server"]
