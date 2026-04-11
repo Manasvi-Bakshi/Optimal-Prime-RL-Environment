@@ -3,6 +3,7 @@ from server.pkt_schd_rl_environment import PacketSchedEnv
 from models import PacketAction
 import subprocess
 import math
+import re
 
 app = FastAPI()
 
@@ -117,13 +118,29 @@ async def grader(request: Request):
 # -----------------------------
 @app.post("/baseline")
 def baseline():
-    result = subprocess.run(
-        ["python", "inference.py"],
-        capture_output=True,
-        text=True
-    )
-    return {"output": result.stdout}
+    tasks = ["easy", "moderate", "hard"]
+    results = {}
 
-@app.get("/")
-def root():
-    return {"status": "ok"}
+    for task in tasks:
+        env = {"TASK_NAME": task}
+
+        result = subprocess.run(
+            ["python", "inference.py"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, **env}
+        )
+
+        output = result.stdout
+
+        # extract score from [END]
+        match = re.search(r"score=([0-9\.]+)", output)
+        if match:
+            score = float(match.group(1))
+        else:
+            score = 0.001  # fallback safe
+
+        # enforce strict bounds
+        score = max(0.001, min(0.999, score))
+
+        results[task] = score
