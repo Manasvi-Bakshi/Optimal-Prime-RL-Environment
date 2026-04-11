@@ -75,9 +75,13 @@ def run_task(task_name: str):
     steps_taken = 0
     prev_ratio = 0.5
 
+    # ✅ CRITICAL: initialize defaults
+    success = False
+    score = 0.01
+
     log_start(task_name)
 
-    _ = call_llm()  # required but safe
+    _ = call_llm()
 
     session = requests.Session()
 
@@ -90,51 +94,49 @@ def run_task(task_name: str):
 
         if err:
             log_step(0, "error", 0.0, True, err)
-            log_end(False, 0, 0.01, [])
-            return
-
-        obs = data["observation"]
-
-        for step in range(1, MAX_STEPS + 1):
-            action_val = heuristic_action(obs, prev_ratio)
-            prev_ratio = action_val
-
-            data, err = safe_post(
-                session,
-                f"{BASE_ENV_URL}/step",
-                {"action": {"priority_ratio": round(action_val, 4)}},
-            )
-
-            if err:
-                log_step(step, "error", 0.0, True, err)
-                break
-
+        else:
             obs = data["observation"]
-            reward = float(data["reward"])
-            done = bool(data["done"])
 
-            rewards.append(reward)
-            total_reward += reward
-            steps_taken = step
+            for step in range(1, MAX_STEPS + 1):
+                action_val = heuristic_action(obs, prev_ratio)
+                prev_ratio = action_val
 
-            log_step(step, f"{action_val:.2f}", reward, done, None)
+                data, err = safe_post(
+                    session,
+                    f"{BASE_ENV_URL}/step",
+                    {"action": {"priority_ratio": round(action_val, 4)}},
+                )
 
-            if done:
-                break
+                if err:
+                    log_step(step, "error", 0.0, True, err)
+                    break
 
-        # SAFE NORMALIZATION
+                obs = data["observation"]
+                reward = float(data["reward"])
+                done = bool(data["done"])
+
+                rewards.append(reward)
+                total_reward += reward
+                steps_taken = step
+
+                log_step(step, f"{action_val:.2f}", reward, done, None)
+
+                if done:
+                    break
+
+        # normalization (even if partial run)
         max_possible = max(1.0, sum(abs(r) for r in rewards) + 1e-6)
         score = total_reward / max_possible
 
-        # 🔥 STRICT RANGE FIX
+        # strict bounds
         score = max(0.01, min(0.98, score))
 
         success = score >= SUCCESS_THRESHOLD
 
     except Exception as e:
         log_step(steps_taken, "error", 0.0, True, str(e))
-        score = 0.01
         success = False
+        score = 0.01
 
     finally:
         session.close()
