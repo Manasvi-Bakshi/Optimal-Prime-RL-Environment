@@ -1,125 +1,95 @@
-# OpenEnv Project Setup Guide
+# Dynamic Bandwidth Allocation using Reinforcement Learning
 
-This guide will help you set up and run the OpenEnv evaluation environment locally.
+A simple reinforcement learning project that learns how to manage network traffic using a hybrid approach (rules + AI).
 
----
+This project simulates a network where two types of packets (priority and regular) compete for limited bandwidth. The goal is to dynamically adjust how much bandwidth each gets in order to reduce packet loss, improve latency, and maintain fairness.
 
-## 1. Install Anaconda & Create Environment
 
-Make sure Anaconda is installed.
+## What this project does
 
-Verify:
+In real-world networks, you often need to decide:
+- Who gets priority?
+- How to avoid congestion?
+- How to balance fairness vs performance?
 
-```
-conda --version
-```
+This project builds a small environment where an agent learns to:
+- Allocate bandwidth between priority and regular traffic
+- Adapt to changing traffic patterns
+- Maximize overall network performance
 
-Create and activate environment:
 
-```
-conda create -n openenv python=3.10 -y
-conda activate openenv
+## Key Idea
 
-(C:\ProgramData\anaconda3\shell\condabin\conda-hook.ps1) ; (conda activate openenv)
-```
+Instead of using pure reinforcement learning, this project combines:
 
-You should see:
+- A **heuristic policy** (rule-based logic)
+- A **language model (LLM)** for decision support
+- A **blending strategy** to combine both
 
-```
-(openenv)
-```
+Final action:
+action = 0.7 * heuristic + 0.3 * LLM
 
----
+## Environment Overview
 
-## 2. Install Dependencies
+The environment simulates packet scheduling with:
 
-Install required Python packages:
+- Two queues:
+  - Priority queue
+  - Regular queue
 
-```
-pip install fastapi uvicorn requests
-```
+- Limited bandwidth per step
 
----
+- Changing traffic patterns (called *regimes*):
+  - Balanced traffic
+  - Priority-heavy traffic
+  - Regular-heavy traffic
+  - Fairness stress scenarios
+  - Throughput-focused scenarios
 
-## 3. VS Code Setup (Important)
+These regimes change over time, making the problem dynamic and harder.
 
-Open the project folder in VS Code.
 
-Then:
+## Observations (State)
 
-* Press `Ctrl + Shift + P`
-* Search: `Python: Select Interpreter`
-* Select:
+At each step, the agent receives:
 
-  ```
-  Python 3.10 (openenv)
-  ```
----
+- Queue sizes (priority + regular)
+- Incoming packets
+- Packet loss rate
+- Latency
+- Throughput
+- Fairness score
 
-## 4. Install Docker
+## Actions
 
-Install Docker Desktop and restart your system.
+The agent outputs:
 
-Verify installation:
+- `priority_ratio` → a value between 0 and 1
 
-```
-docker --version
-docker run hello-world
-```
+This controls how much bandwidth goes to priority traffic vs regular traffic.
 
----
+## Reward Function
 
-## 5. Build Docker Image
+The agent is rewarded based on:
 
-From the project root directory:
+- Lower packet loss
+- Lower latency
+- Higher throughput
+- Better fairness
 
-```
-docker build -t openenv .
-```
+It is penalized for:
+- Congestion
+- Unstable decisions
+- Ignoring traffic patterns
 
----
 
-## 6. Run Container
+## How the Agent Works
 
-```
-docker run -p 7860:7860 openenv
-```
+The decision pipeline:
 
----
-
-## 7. Validate the Setup
-
-In a new terminal:
-
-```
-python validator.py
-```
-
-Expected:
-
-```
-All checks passed
-```
-### Baseline Agent
-
-```
-python baseline/run.py
-```
-
----
-
-## Notes
-
-* Always activate the environment before running anything:
-
-  ```
-  conda activate openenv
-  ```
-
-* Do not use Git Bash for setup; prefer:
-
-  * Command Prompt
-  * PowerShell
-
-* Ensure Docker is running before building.
+1. Compute a **heuristic action** (fast, stable)
+2. Query the **LLM** (optional, if API key provided)
+3. Blend both outputs
+4. Add small randomness for exploration
+5. Send action to environment
 
